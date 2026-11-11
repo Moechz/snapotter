@@ -1,0 +1,88 @@
+# ===========================================================================
+# SnapOtter for TerraMaster TOS 7 (multi-container Docker application)
+# ===========================================================================
+# App image : snapotter/snapotter:2.2.0 (Docker Hub)
+# Database  : postgres:16-alpine (internal only)
+# Cache     : redis:7-alpine (internal only)
+#
+# The app refuses to run its embedded database as a non-root user, so the
+# stack uses an external PostgreSQL + Redis. Only the app publishes a host
+# port; the database and cache are reachable only on the compose network.
+# Every container runs as uid 1000, per the TOS review rules.
+# ===========================================================================
+version: "3.8"
+
+services:
+  snapotterdocker:
+    image: snapotter/snapotter:2.2.0
+    container_name: snapotterdocker
+    restart: unless-stopped
+    user: "1000:1000"
+    depends_on:
+      snapotterdocker-db:
+        condition: service_healthy
+      snapotterdocker-redis:
+        condition: service_healthy
+    ports:
+      - "8073:1349"
+    environment:
+      TZ: "Asia/Shanghai"
+      PUID: "1000"
+      PGID: "1000"
+      DATABASE_URL: "postgres://snap@snapotterdocker-db:5432/snap"
+      REDIS_URL: "redis://snapotterdocker-redis:6379"
+      AUTH_ENABLED: "true"
+      MAX_UPLOAD_SIZE_MB: "0"
+      MAX_BATCH_SIZE: "0"
+      CONCURRENT_JOBS: "0"
+      REDIS_MAXMEMORY: "512mb"
+    volumes:
+      - /Volume1/DockerAppData/snapotterdocker/data:/data
+      - /Volume1/DockerAppData/snapotterdocker/workspace:/tmp/workspace
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:1349/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  snapotterdocker-db:
+    image: postgres:16-alpine
+    container_name: snapotterdocker-db
+    restart: unless-stopped
+    user: "1000:1000"
+    environment:
+      TZ: "Asia/Shanghai"
+      POSTGRES_USER: "snap"
+      POSTGRES_DB: "snap"
+      POSTGRES_HOST_AUTH_METHOD: "trust"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    volumes:
+      - /Volume1/DockerAppData/snapotterdocker/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snap -d snap"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  snapotterdocker-redis:
+    image: redis:7-alpine
+    container_name: snapotterdocker-redis
+    restart: unless-stopped
+    user: "1000:1000"
+    environment:
+      TZ: "Asia/Shanghai"
+    volumes:
+      - /Volume1/DockerAppData/snapotterdocker/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+x-app-meta:
+  web:
+    port: 8073
+    protocol: http
